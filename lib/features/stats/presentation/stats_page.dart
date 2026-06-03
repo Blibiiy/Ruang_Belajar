@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../app/theme.dart';
+import '../../focus_metrics/domain/focus_session_metrics.dart';
 import '../../sessions/bloc/stats_bloc.dart';
 import '../../sessions/bloc/stats_event.dart';
 import '../../sessions/bloc/stats_state.dart';
@@ -40,22 +41,6 @@ class _StatsView extends StatelessWidget {
               );
             }
 
-            // DEBUG: harus kelihatan merah
-            final debugHeader = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'DEBUG: StatsPage (features/stats) with Session History',
-                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  'DEBUG: latestSessions=${state.latestSessions.length}',
-                  style: const TextStyle(color: Colors.red),
-                ),
-                const SizedBox(height: 12),
-              ],
-            );
-
             final todayFocusMin = (state.todayFocusSeconds / 60).floor();
             final todayBreakMin = (state.todayBreakSeconds / 60).floor();
 
@@ -79,7 +64,6 @@ class _StatsView extends StatelessWidget {
               onRefresh: () async => context.read<StatsBloc>().add(const StatsRefreshed()),
               child: ListView(
                 children: [
-
                   _kpiCard(
                     title: 'Today',
                     lines: [
@@ -89,7 +73,6 @@ class _StatsView extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 12),
-
                   _kpiCard(
                     title: 'Last 7 days (focus minutes)',
                     child: Column(
@@ -103,8 +86,10 @@ class _StatsView extends StatelessWidget {
                             children: [
                               SizedBox(
                                 width: 64,
-                                child: Text(label,
-                                    style: const TextStyle(color: AppColors.onSurfaceVariant)),
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(color: AppColors.onSurfaceVariant),
+                                ),
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -135,10 +120,12 @@ class _StatsView extends StatelessWidget {
                       }).toList(),
                     ),
                   ),
-
                   const SizedBox(height: 12),
-                  _sessionHistoryCard(context, state.latestSessions),
-
+                  _sessionHistoryCard(
+                    context,
+                    state.latestSessions,
+                    state.metricsBySessionId,
+                  ),
                   const SizedBox(height: 90),
                 ],
               ),
@@ -149,33 +136,40 @@ class _StatsView extends StatelessWidget {
     );
   }
 
-  Widget _sessionHistoryCard(BuildContext context, List<StudySession> sessions) {
+  Widget _sessionHistoryCard(
+    BuildContext context,
+    List<StudySession> sessions,
+    Map<int, FocusSessionMetrics> metricsBySessionId,
+  ) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text(
-            'Session History (Latest)',
-            style: TextStyle(
-              color: AppColors.onBackground,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (sessions.isEmpty)
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             const Text(
-              'Belum ada riwayat sesi.',
-              style: TextStyle(color: AppColors.onSurfaceVariant),
-            )
-          else
-            ...sessions.map((s) => _sessionRow(context, s)).toList(),
-        ]),
+              'Session History (Latest)',
+              style: TextStyle(
+                color: AppColors.onBackground,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (sessions.isEmpty)
+              const Text(
+                'Belum ada riwayat sesi.',
+                style: TextStyle(color: AppColors.onSurfaceVariant),
+              )
+            else
+              ...sessions.map((s) => _sessionRow(context, s, metricsBySessionId[s.id])).toList(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _sessionRow(BuildContext context, StudySession s) {
+  Widget _sessionRow(BuildContext context, StudySession s, FocusSessionMetrics? metrics) {
     final statusColor = s.isCompleted ? AppColors.primary : AppColors.onSurfaceVariant;
     final statusText = s.isCompleted ? 'Completed' : 'Stopped';
 
@@ -187,11 +181,15 @@ class _StatsView extends StatelessWidget {
     final focus = _mmss(s.focusSeconds);
     final brk = _mmss(s.breakSeconds);
 
+    final scoreText = metrics == null ? 'Focus Score: —' : 'Focus Score: ${metrics.focusScore}%';
+
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => SessionDetailPage(session: s)),
+          MaterialPageRoute(
+            builder: (_) => SessionDetailPage(session: s, metrics: metrics),
+          ),
         );
       },
       child: Padding(
@@ -208,22 +206,34 @@ class _StatsView extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: AppColors.onBackground,
-                    fontWeight: FontWeight.w800,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: AppColors.onBackground,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Focus $focus • Break $brk • Cycles ${s.completedCycles}/${s.plannedCycles}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.onSurfaceVariant),
-                ),
-              ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Focus $focus • Break $brk • Cycles ${s.completedCycles}/${s.plannedCycles}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppColors.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    scoreText,
+                    style: TextStyle(
+                      color: metrics == null ? AppColors.onSurfaceVariant : AppColors.primary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(width: 10),
             Container(
@@ -235,7 +245,11 @@ class _StatsView extends StatelessWidget {
               ),
               child: Text(
                 statusText,
-                style: TextStyle(color: statusColor, fontWeight: FontWeight.w800, fontSize: 12),
+                style: TextStyle(
+                  color: statusColor,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -246,31 +260,35 @@ class _StatsView extends StatelessWidget {
     );
   }
 
-  Widget _kpiCard({
-    required String title,
-    List<String>? lines,
-    Widget? child,
-  }) {
+  Widget _kpiCard({required String title, List<String>? lines, Widget? child}) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.onBackground,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.onBackground,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          if (lines != null)
-            ...lines.map((t) => Padding(
+            const SizedBox(height: 10),
+            if (lines != null)
+              ...lines.map(
+                (t) => Padding(
                   padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(t, style: const TextStyle(color: AppColors.onSurfaceVariant)),
-                )),
-          if (child != null) child,
-        ]),
+                  child: Text(
+                    t,
+                    style: const TextStyle(color: AppColors.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            if (child != null) child,
+          ],
+        ),
       ),
     );
   }

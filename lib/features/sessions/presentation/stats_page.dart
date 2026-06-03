@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../app/theme.dart';
+import '../../focus_metrics/domain/focus_session_metrics.dart';
 import '../../sessions/bloc/stats_bloc.dart';
 import '../../sessions/bloc/stats_event.dart';
 import '../../sessions/bloc/stats_state.dart';
@@ -28,8 +29,7 @@ class _StatsView extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: BlocBuilder<StatsBloc, StatsState>(
           builder: (context, state) {
-            if (state.status == StatsStatus.loading ||
-                state.status == StatsStatus.initial) {
+            if (state.status == StatsStatus.loading || state.status == StatsStatus.initial) {
               return const Center(child: CircularProgressIndicator());
             }
             if (state.status == StatsStatus.failure) {
@@ -47,41 +47,23 @@ class _StatsView extends StatelessWidget {
             final now = DateTime.now();
             final today = DateTime(now.year, now.month, now.day);
 
-            // last 7 days totals
             final totalsByDay = <DateTime, int>{};
             for (int i = 0; i < 7; i++) {
               final d = today.subtract(Duration(days: i));
               totalsByDay[d] = 0;
             }
             for (final s in state.last7DaysSessions) {
-              final d = DateTime(
-                s.startedAt.year,
-                s.startedAt.month,
-                s.startedAt.day,
-              );
+              final d = DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day);
               if (totalsByDay.containsKey(d)) {
                 totalsByDay[d] = (totalsByDay[d] ?? 0) + s.focusSeconds;
               }
             }
-            final entries = totalsByDay.entries.toList()
-              ..sort((a, b) => a.key.compareTo(b.key));
+            final entries = totalsByDay.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
 
             return RefreshIndicator(
-              onRefresh: () async =>
-                  context.read<StatsBloc>().add(const StatsRefreshed()),
+              onRefresh: () async => context.read<StatsBloc>().add(const StatsRefreshed()),
               child: ListView(
                 children: [
-                  const Text(
-                    'DEBUG: StatsPage v2 (has session history)',
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'DEBUG: latestSessions=${state.latestSessions.length}',
-                    style: const TextStyle(color: Colors.red),
-                  ),
                   _kpiCard(
                     title: 'Today',
                     lines: [
@@ -106,9 +88,7 @@ class _StatsView extends StatelessWidget {
                                 width: 64,
                                 child: Text(
                                   label,
-                                  style: const TextStyle(
-                                    color: AppColors.onSurfaceVariant,
-                                  ),
+                                  style: const TextStyle(color: AppColors.onSurfaceVariant),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -116,12 +96,8 @@ class _StatsView extends StatelessWidget {
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(999),
                                   child: LinearProgressIndicator(
-                                    value: (min / 240).clamp(
-                                      0,
-                                      1,
-                                    ), // normalize to 4h
-                                    backgroundColor:
-                                        AppColors.surfaceContainerHigh,
+                                    value: (min / 240).clamp(0, 1),
+                                    backgroundColor: AppColors.surfaceContainerHigh,
                                     valueColor: const AlwaysStoppedAnimation(
                                       AppColors.primaryContainer,
                                     ),
@@ -135,9 +111,7 @@ class _StatsView extends StatelessWidget {
                                 child: Text(
                                   '$min m',
                                   textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    color: AppColors.onBackground,
-                                  ),
+                                  style: const TextStyle(color: AppColors.onBackground),
                                 ),
                               ),
                             ],
@@ -147,7 +121,11 @@ class _StatsView extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _sessionHistoryCard(context, state.latestSessions),
+                  _sessionHistoryCard(
+                    context,
+                    state.latestSessions,
+                    state.metricsBySessionId,
+                  ),
                   const SizedBox(height: 90),
                 ],
               ),
@@ -161,6 +139,7 @@ class _StatsView extends StatelessWidget {
   Widget _sessionHistoryCard(
     BuildContext context,
     List<StudySession> sessions,
+    Map<int, FocusSessionMetrics> metricsBySessionId,
   ) {
     return Card(
       child: Padding(
@@ -183,17 +162,15 @@ class _StatsView extends StatelessWidget {
                 style: TextStyle(color: AppColors.onSurfaceVariant),
               )
             else
-              ...sessions.map((s) => _sessionRow(context, s)).toList(),
+              ...sessions.map((s) => _sessionRow(context, s, metricsBySessionId[s.id])).toList(),
           ],
         ),
       ),
     );
   }
 
-  Widget _sessionRow(BuildContext context, StudySession s) {
-    final statusColor = s.isCompleted
-        ? AppColors.primary
-        : AppColors.onSurfaceVariant;
+  Widget _sessionRow(BuildContext context, StudySession s, FocusSessionMetrics? metrics) {
+    final statusColor = s.isCompleted ? AppColors.primary : AppColors.onSurfaceVariant;
     final statusText = s.isCompleted ? 'Completed' : 'Stopped';
 
     final start = s.startedAt;
@@ -204,11 +181,15 @@ class _StatsView extends StatelessWidget {
     final focus = _mmss(s.focusSeconds);
     final brk = _mmss(s.breakSeconds);
 
+    final scoreText = metrics == null ? 'Focus Score: —' : 'Focus Score: ${metrics.focusScore}%';
+
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => SessionDetailPage(session: s)),
+          MaterialPageRoute(
+            builder: (_) => SessionDetailPage(session: s, metrics: metrics),
+          ),
         );
       },
       child: Padding(
@@ -241,6 +222,15 @@ class _StatsView extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: AppColors.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    scoreText,
+                    style: TextStyle(
+                      color: metrics == null ? AppColors.onSurfaceVariant : AppColors.primary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),

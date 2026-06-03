@@ -6,7 +6,7 @@ final class TaskDb {
   static final TaskDb instance = TaskDb._();
 
   static const _dbName = 'ruang_belajar.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -23,6 +23,7 @@ final class TaskDb {
       onCreate: (db, version) async {
         await db.execute(_createTasksTableSql);
         await db.execute(_createSessionsTableSql);
+        await db.execute(_createFocusMetricsTableSql);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -30,6 +31,9 @@ final class TaskDb {
         }
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE $tasksTable ADD COLUMN notification_id INTEGER;');
+        }
+        if (oldVersion < 4) {
+          await db.execute(_createFocusMetricsTableSql);
         }
       },
     );
@@ -39,6 +43,7 @@ final class TaskDb {
 
   static const tasksTable = 'tasks';
   static const sessionsTable = 'study_sessions';
+  static const focusMetricsTable = 'focus_session_metrics';
 
   static const _createTasksTableSql = '''
 CREATE TABLE $tasksTable (
@@ -71,6 +76,29 @@ CREATE TABLE $sessionsTable (
 
   is_completed INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL
+);
+''';
+
+  static const _createFocusMetricsTableSql = '''
+CREATE TABLE $focusMetricsTable (
+  session_id INTEGER PRIMARY KEY,
+
+  focus_total_seconds INTEGER NOT NULL,
+  focus_active_seconds INTEGER NOT NULL,
+
+  absent_seconds INTEGER NOT NULL,
+  distracted_seconds INTEGER NOT NULL,
+  fatigued_seconds INTEGER NOT NULL,
+
+  absent_events INTEGER NOT NULL,
+  distracted_events INTEGER NOT NULL,
+  fatigued_events INTEGER NOT NULL,
+
+  focus_score REAL NOT NULL,
+
+  created_at_ms INTEGER NOT NULL,
+
+  FOREIGN KEY(session_id) REFERENCES $sessionsTable(id) ON DELETE CASCADE
 );
 ''';
 }

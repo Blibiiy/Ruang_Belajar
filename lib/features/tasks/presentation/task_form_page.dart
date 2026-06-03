@@ -122,7 +122,6 @@ class _TaskFormPageState extends State<TaskFormPage> {
               decoration: _inputDecoration(hint: 'e.g., Read Chapter 4'),
             ),
             const SizedBox(height: 16),
-
             _fieldLabel('Description'),
             const SizedBox(height: 8),
             TextField(
@@ -132,7 +131,6 @@ class _TaskFormPageState extends State<TaskFormPage> {
               decoration: _inputDecoration(hint: 'Add notes, links, or details...'),
             ),
             const SizedBox(height: 16),
-
             _fieldLabel('Deadline'),
             const SizedBox(height: 8),
             InkWell(
@@ -163,15 +161,12 @@ class _TaskFormPageState extends State<TaskFormPage> {
               ),
             ),
             const SizedBox(height: 16),
-
             _fieldLabel('Priority'),
             const SizedBox(height: 8),
             _prioritySegment(),
           ],
         ),
       ),
-
-      // sticky bottom action area (mirip HTML kamu)
       bottomSheet: SafeArea(
         top: false,
         child: Container(
@@ -180,38 +175,15 @@ class _TaskFormPageState extends State<TaskFormPage> {
             color: AppColors.surfaceContainer.withOpacity(0.95),
             border: Border(top: BorderSide(color: AppColors.outlineVariant.withOpacity(0.2))),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // MVP: tombol AI belum berfungsi, tapi UI-nya ada dulu
-              OutlinedButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('AI scheduling belum termasuk MVP (nanti di fase next).')),
-                  );
-                },
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  side: BorderSide(color: AppColors.primary.withOpacity(0.35)),
-                  backgroundColor: AppColors.surfaceContainerHigh,
-                  foregroundColor: AppColors.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text('Ask AI to Schedule'),
-              ),
-              const SizedBox(height: 10),
-              FilledButton(
-                onPressed: _save,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                  backgroundColor: AppColors.primaryContainer,
-                  foregroundColor: const Color(0xFF003A3D),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Text(isEdit ? 'Save Changes' : 'Save Task'),
-              ),
-            ],
+          child: FilledButton(
+            onPressed: _save,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+              backgroundColor: AppColors.primaryContainer,
+              foregroundColor: const Color(0xFF003A3D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text(isEdit ? 'Save Changes' : 'Save Task'),
           ),
         ),
       ),

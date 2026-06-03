@@ -51,10 +51,12 @@ final class FocusTimerBloc extends Bloc<FocusTimerEvent, FocusTimerState> {
       createdAt: DateTime.now(),
     );
 
-    await sessionsRepo.insert(session);
+    final saved = await sessionsRepo.insert(session);
 
-    // bump nonce to let UI know a session was saved
-    emit(state.copyWith(sessionSaveNonce: state.sessionSaveNonce + 1));
+    emit(state.copyWith(
+      sessionSaveNonce: state.sessionSaveNonce + 1,
+      lastSavedSession: saved,
+    ));
   }
 
   void _onSelectTask(FocusTimerTaskSelected e, Emitter<FocusTimerState> emit) {
@@ -71,7 +73,6 @@ final class FocusTimerBloc extends Bloc<FocusTimerEvent, FocusTimerState> {
     final focusSec = (focusMin * 60) + focusSecExtra;
     final breakSec = (breakMin * 60) + breakSecExtra;
 
-    // ensure focus at least 1 second
     final safeFocus = focusSec <= 0 ? 1 : focusSec;
 
     _timer?.cancel();
@@ -129,7 +130,6 @@ final class FocusTimerBloc extends Bloc<FocusTimerEvent, FocusTimerState> {
     _timer?.cancel();
     _timer = null;
 
-    // Only log if focus >= 60s
     if (_spentFocusSeconds >= _minFocusSecondsToLogOnStop) {
       await _persistSession(isCompleted: false);
     }

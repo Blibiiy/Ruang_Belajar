@@ -13,6 +13,7 @@ final class TaskBloc extends Bloc<TaskEvent, TaskState> {
     on<TaskStarted>(_onStarted);
     on<TaskCreated>(_onCreated);
     on<TaskUpdated>(_onUpdated);
+    on<TasksBulkUpdated>(_onBulkUpdated);
     on<TaskDeleted>(_onDeleted);
     on<TaskRefreshed>(_onRefreshed);
   }
@@ -49,6 +50,18 @@ final class TaskBloc extends Bloc<TaskEvent, TaskState> {
   Future<void> _onUpdated(TaskUpdated event, Emitter<TaskState> emit) async {
     try {
       await repo.update(event.task);
+      final tasks = await repo.getAll();
+      emit(state.copyWith(status: TaskStatus.ready, tasks: tasks));
+    } catch (e) {
+      emit(state.copyWith(status: TaskStatus.failure, errorMessage: e.toString()));
+    }
+  }
+
+  Future<void> _onBulkUpdated(TasksBulkUpdated event, Emitter<TaskState> emit) async {
+    try {
+      for (final t in event.tasks) {
+        await repo.update(t);
+      }
       final tasks = await repo.getAll();
       emit(state.copyWith(status: TaskStatus.ready, tasks: tasks));
     } catch (e) {

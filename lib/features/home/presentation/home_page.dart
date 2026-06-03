@@ -1,8 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/datetime/datetime_ext.dart';
+import '../../ai_scheduling/data/gemini_scheduling_service.dart';
+import '../../ai_scheduling/presentation/auto_schedule_sheet.dart';
 import '../../notifications/local_notification_service.dart';
 import '../../tasks/bloc/task_bloc.dart';
 import '../../tasks/domain/task.dart';
@@ -61,8 +65,12 @@ class HomePage extends StatelessWidget {
                   _sectionHeader(
                     title: 'Unscheduled Tasks',
                     subtitle: '${unscheduled.length} Items',
-                    actionText: 'Add',
-                    onAction: () => _openAdd(context),
+                    primaryActionText: 'Add',
+                    onPrimaryAction: () => _openAdd(context),
+                    secondaryActionText: 'Auto schedule',
+                    onSecondaryAction: unscheduled.isEmpty
+                        ? null
+                        : () => _autoScheduleAllUnscheduled(context, unscheduled, scheduled),
                   ),
                   const SizedBox(height: 10),
 
@@ -86,8 +94,8 @@ class HomePage extends StatelessWidget {
                   _sectionHeader(
                     title: 'Scheduled Soon',
                     subtitle: '${scheduledSoon.length} Items',
-                    actionText: 'Calendar',
-                    onAction: () {
+                    primaryActionText: 'Calendar',
+                    onPrimaryAction: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Buka tab Calendar untuk lihat semua jadwal.')),
                       );
@@ -118,6 +126,176 @@ class HomePage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _autoScheduleAllUnscheduled(
+    BuildContext context,
+    List<Task> unscheduled,
+    List<Task> scheduledExisting,
+  ) async {
+    final answers = await showModalBottomSheet<AutoScheduleAnswers>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surfaceContainer,
+      builder: (_) => const AutoScheduleSheet(),
+    );
+    if (answers == null) return;
+
+    // loading dialog
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final now = DateTime.now();
+      final horizon = now.add(const Duration(days: 14)); // fallback for tasks w/out deadline
+
+      final service = GeminiSchedulingService();
+      final results = await service.createSchedule(
+        req: AutoScheduleRequest(
+          activeHours: answers.hours,
+          activeDays: answers.activeDays,
+          strategy: answers.strategy,
+          bufferMinutes: answers.bufferMinutes,
+          nowLocal: now,
+          horizonEndLocal: horizon,
+        ),
+        unscheduledTasks: unscheduled.where((t) => t.id != null).toList(),
+        existingScheduledTasks: scheduledExisting,
+      );
+
+      // Map results by taskId
+      final byId = {for (final r in results) r.taskId: r.scheduledAtLocal};
+
+      // Apply schedule with validation + auto-fix (no past, no exact-start conflict).
+      final usedStartTimes = <int>{};
+      for (final t in scheduledExisting) {
+        final s = t.scheduledAt;
+        if (s != null) usedStartTimes.add(s.millisecondsSinceEpoch);
+      }
+
+      DateTime clampToActiveWindow(DateTime dt) {
+        // Only basic clamp: keep within active hours (same day) by moving forward to startHour if needed.
+        final start = DateTime(dt.year, dt.month, dt.day, answers.hours.startHour, answers.hours.startMinute);
+        final end = DateTime(dt.year, dt.month, dt.day, answers.hours.endHour, answers.hours.endMinute);
+
+        if (dt.isBefore(start)) return start;
+        if (!dt.isBefore(end)) {
+          // move to next day start
+          final nextDay = DateTime(dt.year, dt.month, dt.day).add(const Duration(days: 1));
+          return DateTime(nextDay.year, nextDay.month, nextDay.day, answers.hours.startHour, answers.hours.startMinute);
+        }
+        return dt;
+      }
+
+      bool isActiveDay(DateTime dt) {
+        if (answers.activeDays == ActiveDays.everyday) return true;
+        // weekdays
+        return dt.weekday >= DateTime.monday && dt.weekday <= DateTime.friday;
+      }
+
+      DateTime moveToNextActiveDayStart(DateTime dt) {
+        var cur = dt;
+        while (!isActiveDay(cur)) {
+          final d = DateTime(cur.year, cur.month, cur.day).add(const Duration(days: 1));
+          cur = DateTime(d.year, d.month, d.day, answers.hours.startHour, answers.hours.startMinute);
+        }
+        return cur;
+      }
+
+      DateTime nextAvailable(DateTime candidate) {
+        var c = candidate;
+        c = clampToActiveWindow(c);
+        c = moveToNextActiveDayStart(c);
+
+        // avoid past
+        if (c.isBefore(now)) c = now.add(const Duration(minutes: 1));
+        c = clampToActiveWindow(c);
+        c = moveToNextActiveDayStart(c);
+
+        // avoid exact-start conflicts; step by buffer minutes (>=1)
+        final step = math.max(1, answers.bufferMinutes);
+        while (usedStartTimes.contains(c.millisecondsSinceEpoch)) {
+          c = c.add(Duration(minutes: step));
+          c = clampToActiveWindow(c);
+          c = moveToNextActiveDayStart(c);
+        }
+        usedStartTimes.add(c.millisecondsSinceEpoch);
+        return c;
+      }
+
+      final updates = <Task>[];
+
+      for (final t in unscheduled) {
+        final id = t.id;
+        if (id == null) continue;
+
+        final proposed = byId[id];
+        if (proposed == null) continue;
+
+        // Respect deadline: if proposed after deadline, pull it back to <= deadline if possible.
+        DateTime candidate = proposed;
+
+        final dl = t.deadline;
+        if (dl != null && candidate.isAfter(dl)) {
+          // best effort: schedule at deadline minus small buffer, then normalize
+          candidate = dl.subtract(Duration(minutes: math.max(1, answers.bufferMinutes)));
+        }
+
+        // If no deadline, keep within horizon.
+        if (dl == null && candidate.isAfter(horizon)) {
+          candidate = horizon.subtract(const Duration(hours: 1));
+        }
+
+        final scheduledAt = nextAvailable(candidate);
+
+        // notif handling
+        final oldNotifId = t.notificationId;
+        if (oldNotifId != null) {
+          await LocalNotificationService.instance.cancel(oldNotifId);
+        }
+        final notifId = oldNotifId ?? _generateNotifId();
+
+        final updated = t.copyWith(
+          scheduledAt: scheduledAt,
+          notificationId: notifId,
+        );
+        updates.add(updated);
+
+        await LocalNotificationService.instance.scheduleTaskReminder(
+          notificationId: notifId,
+          when: scheduledAt,
+          title: 'Ruang Belajar',
+          body: 'Time to study: ${t.title}',
+        );
+      }
+
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // close loading
+
+      if (updates.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('AI tidak mengembalikan jadwal yang bisa dipakai.')),
+        );
+        return;
+      }
+
+      context.read<TaskBloc>().add(TasksBulkUpdated(updates));
+      context.read<TaskBloc>().add(const TaskRefreshed());
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Auto schedule selesai: ${updates.length} task dijadwalkan.')),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.of(context).pop(); // close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Auto schedule gagal: $e')),
+        );
+      }
+    }
   }
 
   Widget _heroCard(List<Task> tasks) {
@@ -165,8 +343,10 @@ class HomePage extends StatelessWidget {
   Widget _sectionHeader({
     required String title,
     required String subtitle,
-    required String actionText,
-    required VoidCallback onAction,
+    required String primaryActionText,
+    required VoidCallback onPrimaryAction,
+    String? secondaryActionText,
+    VoidCallback? onSecondaryAction,
   }) {
     return Row(
       children: [
@@ -184,10 +364,16 @@ class HomePage extends StatelessWidget {
             Text(subtitle, style: const TextStyle(color: AppColors.onSurfaceVariant)),
           ]),
         ),
+        if (secondaryActionText != null)
+          TextButton(
+            onPressed: onSecondaryAction,
+            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+            child: Text(secondaryActionText),
+          ),
         TextButton(
-          onPressed: onAction,
+          onPressed: onPrimaryAction,
           style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-          child: Text(actionText),
+          child: Text(primaryActionText),
         ),
       ],
     );
@@ -228,7 +414,6 @@ class HomePage extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,9 +438,7 @@ class HomePage extends StatelessWidget {
                   ],
                 ),
               ),
-
               const SizedBox(width: 10),
-
               SizedBox(
                 width: 140,
                 child: Row(
@@ -353,7 +536,6 @@ class HomePage extends StatelessWidget {
 
     final scheduled = DateTime(date.year, date.month, date.day, time.hour, time.minute);
 
-    // cancel old notif if exists
     final oldNotifId = t.notificationId;
     if (oldNotifId != null) {
       await LocalNotificationService.instance.cancel(oldNotifId);

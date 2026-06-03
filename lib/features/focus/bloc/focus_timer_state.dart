@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import '../../tasks/domain/task.dart';
+import '../../sessions/domain/study_session.dart';
 
 enum FocusPhase { focus, breakTime, completed }
 
@@ -28,6 +29,9 @@ final class FocusTimerState extends Equatable {
   /// Increments whenever a StudySession is saved to DB.
   final int sessionSaveNonce;
 
+  /// The last session saved (contains DB id).
+  final StudySession? lastSavedSession;
+
   const FocusTimerState({
     required this.phase,
     required this.isRunning,
@@ -38,6 +42,7 @@ final class FocusTimerState extends Equatable {
     required this.currentCycle,
     required this.currentTask,
     required this.sessionSaveNonce,
+    required this.lastSavedSession,
   });
 
   factory FocusTimerState.initial() => const FocusTimerState(
@@ -50,6 +55,7 @@ final class FocusTimerState extends Equatable {
         remainingSeconds: 25 * 60,
         currentTask: null,
         sessionSaveNonce: 0,
+        lastSavedSession: null,
       );
 
   FocusTimerState copyWith({
@@ -63,6 +69,8 @@ final class FocusTimerState extends Equatable {
     Task? currentTask,
     bool clearTask = false,
     int? sessionSaveNonce,
+    StudySession? lastSavedSession,
+    bool clearLastSavedSession = false,
   }) {
     return FocusTimerState(
       phase: phase ?? this.phase,
@@ -74,6 +82,7 @@ final class FocusTimerState extends Equatable {
       currentCycle: currentCycle ?? this.currentCycle,
       currentTask: clearTask ? null : (currentTask ?? this.currentTask),
       sessionSaveNonce: sessionSaveNonce ?? this.sessionSaveNonce,
+      lastSavedSession: clearLastSavedSession ? null : (lastSavedSession ?? this.lastSavedSession),
     );
   }
 
@@ -100,5 +109,6 @@ final class FocusTimerState extends Equatable {
         currentCycle,
         currentTask,
         sessionSaveNonce,
+        lastSavedSession,
       ];
 }

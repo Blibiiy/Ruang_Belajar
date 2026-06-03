@@ -3,7 +3,6 @@ import '../../home/presentation/home_page.dart';
 import '../../calendar/presentation/calendar_page.dart';
 import '../../focus/presentation/focus_page.dart';
 import '../../stats/presentation/stats_page.dart';
-import '../../profile/presentation/profile_page.dart';
 
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key});
@@ -20,7 +19,6 @@ class _ShellPageState extends State<ShellPage> {
     CalendarPage(),
     FocusPage(),
     StatsPage(),
-    ProfilePage(),
   ];
 
   @override
@@ -45,7 +43,6 @@ class _ShellPageState extends State<ShellPage> {
               BottomNavigationBarItem(icon: Icon(Icons.calendar_month), label: 'Calendar'),
               BottomNavigationBarItem(icon: Icon(Icons.timer), label: 'Focus'),
               BottomNavigationBarItem(icon: Icon(Icons.analytics), label: 'Stats'),
-              BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
             ],
           ),
         ),

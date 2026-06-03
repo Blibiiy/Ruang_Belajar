@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../app/theme.dart';
+import '../../focus_metrics/data/focus_metrics_repository.dart';
+import '../../focus_metrics/domain/focus_session_metrics.dart';
 import '../../sessions/bloc/stats_bloc.dart';
 import '../../sessions/bloc/stats_event.dart';
 import '../../tasks/domain/task.dart';
@@ -38,24 +43,99 @@ class FocusPage extends StatelessWidget {
   }
 }
 
-class _FocusView extends StatelessWidget {
+class _FocusView extends StatefulWidget {
   const _FocusView();
+
+  @override
+  State<_FocusView> createState() => _FocusViewState();
+}
+
+class _FocusViewState extends State<_FocusView> {
+  static const int absentGraceSeconds = 3; // ubah ke 5 jika kamu mau
+  Timer? _absentGraceTimer;
+
+  void _cancelAbsentGrace() {
+    _absentGraceTimer?.cancel();
+    _absentGraceTimer = null;
+  }
+
+  void _startAbsentGraceIfNeeded() {
+    if (_absentGraceTimer != null) return;
+
+    _absentGraceTimer = Timer(const Duration(seconds: absentGraceSeconds), () {
+      if (!mounted) return;
+
+      final timerState = context.read<FocusTimerBloc>().state;
+      final monState = context.read<FocusMonitoringBloc>().state;
+
+      final isInFocusAndRunning =
+          timerState.isRunning && timerState.phase == FocusPhase.focus && !timerState.isCompleted;
+
+      if (isInFocusAndRunning && monState.status == FocusStatus.absent) {
+        context.read<FocusTimerBloc>().add(const FocusTimerPaused());
+      }
+
+      _absentGraceTimer = null;
+    });
+  }
+
+  Future<void> _persistMetricsForLastSavedSession(FocusTimerState timerState) async {
+    final saved = timerState.lastSavedSession;
+    final sessionId = saved?.id;
+    if (sessionId == null) return;
+
+    final mon = context.read<FocusMonitoringBloc>().state;
+
+    // Total focus for score uses session focusSeconds (what you logged).
+    final total = saved!.focusSeconds;
+    final active = math.min(mon.focusedActiveSeconds, total);
+
+    final score = total <= 0 ? 0.0 : (active / total) * 100.0;
+
+    final metrics = FocusSessionMetrics(
+      sessionId: sessionId,
+      focusTotalSeconds: total,
+      focusActiveSeconds: active,
+      absentSeconds: mon.absentSeconds,
+      distractedSeconds: mon.distractedSeconds,
+      fatiguedSeconds: mon.fatiguedSeconds,
+      absentEvents: mon.absentEvents,
+      distractedEvents: mon.distractedEvents,
+      fatiguedEvents: mon.fatiguedEvents,
+      focusScore: double.parse(score.toStringAsFixed(1)),
+      createdAt: DateTime.now(),
+    );
+
+    await context.read<FocusMetricsRepository>().upsert(metrics);
+
+    // Refresh again so stats list picks up metrics
+    if (mounted) {
+      context.read<StatsBloc>().add(const StatsRefreshed());
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelAbsentGrace();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiBlocListener(
       listeners: [
+        // When session saved:
+        // 1) refresh stats
+        // 2) save focus metrics for that session id
         BlocListener<FocusTimerBloc, FocusTimerState>(
           listenWhen: (prev, curr) => prev.sessionSaveNonce != curr.sessionSaveNonce,
-          listener: (context, state) {
+          listener: (context, state) async {
             context.read<StatsBloc>().add(const StatsRefreshed());
+            await _persistMetricsForLastSavedSession(state);
           },
         ),
 
-        // Monitoring lifecycle:
-        // - Start when timer is running AND phase is focus
-        // - Stop ONLY when leaving focus phase OR when completed
-        //   (do NOT stop on pause to avoid disposed-preview race)
+        // Monitoring ON only when timer running focus
         BlocListener<FocusTimerBloc, FocusTimerState>(
           listenWhen: (prev, curr) =>
               prev.isRunning != curr.isRunning ||
@@ -64,35 +144,38 @@ class _FocusView extends StatelessWidget {
           listener: (context, timerState) {
             final monitoring = context.read<FocusMonitoringBloc>();
 
-            final shouldStart = timerState.isRunning && timerState.phase == FocusPhase.focus;
-            final shouldStop = timerState.phase != FocusPhase.focus || timerState.isCompleted;
+            final shouldRun = timerState.isRunning &&
+                timerState.phase == FocusPhase.focus &&
+                !timerState.isCompleted;
 
-            if (shouldStop) {
-              monitoring.add(const FocusMonitoringStopped());
-              return;
-            }
-
-            if (shouldStart) {
+            if (shouldRun) {
               monitoring.add(const FocusMonitoringStarted());
+            } else {
+              monitoring.add(const FocusMonitoringStopped());
+              _cancelAbsentGrace();
             }
           },
         ),
 
-        // Auto-pause timer when sustained issue detected (only while focus running).
+        // Auto-pause ONLY for Absent (grace)
         BlocListener<FocusMonitoringBloc, FocusMonitoringState>(
           listenWhen: (prev, curr) => prev.status != curr.status,
           listener: (context, monState) {
             final timerState = context.read<FocusTimerBloc>().state;
-            final isInFocusAndRunning =
-                timerState.isRunning && timerState.phase == FocusPhase.focus;
 
-            if (!isInFocusAndRunning) return;
+            final isInFocusAndRunning = timerState.isRunning &&
+                timerState.phase == FocusPhase.focus &&
+                !timerState.isCompleted;
 
-            if (monState.status == FocusStatus.absent ||
-                monState.status == FocusStatus.distracted ||
-                monState.status == FocusStatus.fatigued) {
-              context.read<FocusTimerBloc>().add(const FocusTimerPaused());
-              // Monitoring keeps running while paused.
+            if (!isInFocusAndRunning) {
+              _cancelAbsentGrace();
+              return;
+            }
+
+            if (monState.status == FocusStatus.absent) {
+              _startAbsentGraceIfNeeded();
+            } else {
+              _cancelAbsentGrace();
             }
           },
         ),
@@ -176,8 +259,6 @@ class _FocusView extends StatelessWidget {
             ? 'Error: ${s.error}'
             : 'Active: ${s.focusedActiveSeconds}s / ${s.totalObservedSeconds}s';
 
-        final debug = 'DEBUG: monRunning=${s.isRunning}';
-
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -209,16 +290,6 @@ class _FocusView extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: AppColors.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    debug,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.onSurfaceVariant.withOpacity(0.6),
-                      fontSize: 12,
-                    ),
                   ),
                 ]),
               ),
@@ -477,46 +548,11 @@ class _CameraDebugPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<FocusMonitoringBloc, FocusMonitoringState>(
       builder: (context, s) {
-        // IMPORTANT: never build CameraPreview when monitoring is not running.
-        if (!s.isRunning) {
-          return Container(
-            width: 140,
-            height: 190,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.outlineVariant.withOpacity(0.25)),
-            ),
-            child: const Center(
-              child: Text(
-                'Camera: stopped',
-                style: TextStyle(color: AppColors.onSurfaceVariant),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          );
-        }
+        if (!s.isRunning) return const SizedBox.shrink();
 
         final controller = s.controller;
         if (controller == null || !controller.value.isInitialized) {
-          return Container(
-            width: 140,
-            height: 190,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.outlineVariant.withOpacity(0.25)),
-            ),
-            child: const Center(
-              child: Text(
-                'Camera: not ready',
-                style: TextStyle(color: AppColors.onSurfaceVariant),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          );
+          return const SizedBox.shrink();
         }
 
         final yaw = s.yaw?.toStringAsFixed(1) ?? '-';

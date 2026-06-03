@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import '../../focus_metrics/domain/focus_session_metrics.dart';
 import '../domain/study_session.dart';
 
 enum StatsStatus { initial, loading, ready, failure }
@@ -16,6 +17,9 @@ final class StatsState extends Equatable {
   /// latest sessions for history list
   final List<StudySession> latestSessions;
 
+  /// NEW: metrics keyed by session id
+  final Map<int, FocusSessionMetrics> metricsBySessionId;
+
   final String? errorMessage;
 
   const StatsState({
@@ -25,6 +29,7 @@ final class StatsState extends Equatable {
     required this.todayCompletedSessions,
     required this.last7DaysSessions,
     required this.latestSessions,
+    required this.metricsBySessionId,
     this.errorMessage,
   });
 
@@ -35,6 +40,7 @@ final class StatsState extends Equatable {
         todayCompletedSessions = 0,
         last7DaysSessions = const [],
         latestSessions = const [],
+        metricsBySessionId = const {},
         errorMessage = null;
 
   StatsState copyWith({
@@ -44,6 +50,7 @@ final class StatsState extends Equatable {
     int? todayCompletedSessions,
     List<StudySession>? last7DaysSessions,
     List<StudySession>? latestSessions,
+    Map<int, FocusSessionMetrics>? metricsBySessionId,
     String? errorMessage,
   }) {
     return StatsState(
@@ -53,6 +60,7 @@ final class StatsState extends Equatable {
       todayCompletedSessions: todayCompletedSessions ?? this.todayCompletedSessions,
       last7DaysSessions: last7DaysSessions ?? this.last7DaysSessions,
       latestSessions: latestSessions ?? this.latestSessions,
+      metricsBySessionId: metricsBySessionId ?? this.metricsBySessionId,
       errorMessage: errorMessage,
     );
   }
@@ -65,6 +73,7 @@ final class StatsState extends Equatable {
         todayCompletedSessions,
         last7DaysSessions,
         latestSessions,
+        metricsBySessionId,
         errorMessage,
       ];
 }

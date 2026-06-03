@@ -30,6 +30,14 @@ final class TaskUpdated extends TaskEvent {
   List<Object?> get props => [task];
 }
 
+final class TasksBulkUpdated extends TaskEvent {
+  final List<Task> tasks;
+  const TasksBulkUpdated(this.tasks);
+
+  @override
+  List<Object?> get props => [tasks];
+}
+
 final class TaskDeleted extends TaskEvent {
   final int id;
   const TaskDeleted(this.id);
