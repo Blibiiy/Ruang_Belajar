@@ -67,10 +67,6 @@ class HomePage extends StatelessWidget {
                     subtitle: '${unscheduled.length} Items',
                     primaryActionText: 'Add',
                     onPrimaryAction: () => _openAdd(context),
-                    secondaryActionText: 'Auto schedule',
-                    onSecondaryAction: unscheduled.isEmpty
-                        ? null
-                        : () => _autoScheduleAllUnscheduled(context, unscheduled, scheduled),
                   ),
                   const SizedBox(height: 10),
 
@@ -284,16 +280,9 @@ class HomePage extends StatelessWidget {
 
       context.read<TaskBloc>().add(TasksBulkUpdated(updates));
       context.read<TaskBloc>().add(const TaskRefreshed());
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Auto schedule selesai: ${updates.length} task dijadwalkan.')),
-      );
     } catch (e) {
       if (context.mounted) {
         Navigator.of(context).pop(); // close loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Auto schedule gagal: $e')),
-        );
       }
     }
   }
